@@ -1,3 +1,0 @@
-#+ID: abc-123
-* Agriculture
-Farming info linked to [[id:abc-456][Trade Networks]].

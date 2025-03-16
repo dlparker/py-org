@@ -6,6 +6,7 @@ class Syntax(object):
     IMAGE = r'\[\[(?P<image>.+?)\](?:\[(?P<alt>.+?)\])?\]'
     # New Org-roam link pattern
     ROAM_LINK = r'\[\[id:(?P<id>[a-f0-9\-]+)\](?:\[(?P<title>.+?)\])?\]'
+    ID_PROPERTY = r'#\+ID:\s*(?P<id>[a-zA-Z0-9\-_]+)' 
     BOLD = r'\*(?P<text>.+?)\*'
     ITALIC = r'/(?P<text>.+?)/'
     UNDERLINED = r'_(?P<text>.+?)_'
@@ -34,10 +35,11 @@ class NestingNotValidError(BaseError):
 
 class Node(object):
     '''Base class of all node'''
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, ID=None):
         self.type_ = self.__class__.__name__
         self.children = []
         self.parent = parent
+        self.ID = ID
         self.id_map = {}  # Map IDs to nodes
 
     def __str__(self):
@@ -69,7 +71,7 @@ class TerminalNode(object):
     regexps = {
         'link': compile(Syntax.LINK),
         'image': compile(Syntax.IMAGE),
-        'roam_link': compile(Syntax.ROAM_LINK),  # Add this
+        'roam_link': compile(Syntax.ROAM_LINK),  
         'bold': compile(Syntax.BOLD),
         'italic': compile(Syntax.ITALIC),
         'underlined': compile(Syntax.UNDERLINED),
@@ -174,7 +176,10 @@ class OrgRoamLink(TerminalNode):
 class Paragraph(Node):
     '''Paragraph Class'''
     def _get_open(self):
-        return '<p>'
+        opt = ""
+        if self.ID:
+            opt = f" id={self.ID}"
+        return f'<p{opt}>'
 
     def _get_close(self):
         return '</p>'
@@ -266,15 +271,18 @@ class MonospaceText(Text):
 
 class Blockquote(Node):
     '''Blockquote Class'''
-    def __init__(self, cite=None):
+    def __init__(self, cite=None, ID=None):
         self.cite = cite
-        super().__init__()
+        super().__init__(ID=ID)
 
     def _get_open(self):
+        opt = ""
+        if self.ID:
+            opt = f" id={self.ID}"
         if self.cite:
-            return '<blockquote cite="{}">'.format(self.cite)
+            return '<blockquote{} cite="{}">'.format(opt, self.cite)
         else:
-            return '<blockquote>'
+            return f'<blockquote{opt}>'
 
     def _get_close(self):
         return '</blockquote>'
@@ -282,37 +290,42 @@ class Blockquote(Node):
 
 class CodeBlock(Node):
     ''' Block class Code Class '''
-    def __init__(self, src_type=None):
+    def __init__(self, src_type=None, ID=None):
         self.src_type = src_type
-        super().__init__()
+        super().__init__(ID=ID)
 
     def _get_open(self):
+        opt = ""
+        if self.ID:
+            opt = f" id={self.ID}"
         if self.src_type:
-            return '<pre><code class="{}">'.format(self.src_type)
+            return '<pre{}><code class="{}">'.format(opt, self.src_type)
         else:
-            return '<pre><code>'
+            return f'<pre{opt}><code>'
 
     def _get_close(self):
         return '</code></pre>'
 
 class Heading(Node):
-    def __init__(self, depth, title, default_depth=1, heading_id=None):
+    def __init__(self, depth, title, default_depth=1, ID=None):
         self.depth = depth + (default_depth - 1)
         self.title = title
-        self.heading_id = heading_id  # Optional ID from properties
-        super().__init__()
+        super().__init__(ID=ID)
         self.type_ = 'Heading{}'.format(self.depth)
 
     def html(self, br='', id_map=None):
-        if id_map is not None and self.heading_id:
-            id_map[self.heading_id] = self  # Register ID
-        attrs = f' id="{self.heading_id}"' if self.heading_id else ''
+        if id_map is not None and self.ID:
+            id_map[self.ID] = self  # Register ID
+        attrs = f' id="{self.ID}"' if self.ID else ''
         heading = f'<h{self.depth}{attrs}>{self.title}</h{self.depth}>'
         content = ''.join(child.html(br, id_map) for child in self.children)
         return heading + content
     
     def _get_open(self):
-        return '<h{}>'.format(self.depth)
+        opt = ""
+        if self.ID:
+            opt = f" id={self.ID}"
+        return '<h{}{}>'.format(self.depth, opt)
 
     def _get_close(self):
         return '</h{}>'.format(self.depth)
@@ -320,13 +333,13 @@ class Heading(Node):
 
 class List(Node):
     '''List Class'''
-    def __init__(self, depth, ordered, definition, start=1):
+    def __init__(self, depth, ordered, definition, start=1, ID=None):
         self.depth = depth
         self.ordered = ordered
         self.definition = definition
         if self.ordered:
             self.start = start
-        super().__init__()
+        super().__init__(ID=ID)
 
     def html(self, br='', lstrip=False, id_map=None):
         if id_map is not None:
@@ -381,8 +394,8 @@ class DefinitionList(List):
 
 class DefinitionListItem(Node):
     '''Definition List Item Class'''
-    def __init__(self, title, description):
-        super().__init__()
+    def __init__(self, title, description, ID=None):
+        super().__init__(ID=ID)
         self.children.append(DefinitionListItemTitle(title))
         self.children.append(DefinitionListItemDescription(description))
 
@@ -478,6 +491,7 @@ class Org(object):
     regexps = {
         'whiteline': compile(Syntax.WHITELINE),
         'heading': compile(Syntax.HEADING),
+        'id_property': compile(Syntax.ID_PROPERTY),
         'blockquote_begin': compile(Syntax.QUOTE_BEGIN),
         'blockquote_end': compile(Syntax.QUOTE_END),
         'src_begin': compile(Syntax.SRC_BEGIN),
@@ -498,6 +512,7 @@ class Org(object):
         self.default_heading = default_heading
         self.file_id = file_id  # Optional ID from file metadata
         self.id_map = {}  # Map IDs to nodes
+        self.pending_id = None  # Track ID until next content
         self._parse(self.text)
 
     def __str__(self):
@@ -507,8 +522,9 @@ class Org(object):
         text = text.splitlines()
         for line in text:
             # Check for #+ID: property
-            if line.startswith('#+ID:'):
-                self.file_id = line.split('#+ID:')[1].strip()
+            if self.regexps['id_property'].match(line):
+                m = self.regexps['id_property'].match(line)
+                self.pending_id = m.group('id')  # Set pending ID
             if self.src_flg and not self.regexps['src_end'].match(line):
                 self.current.append(Text(line, noparse=True))
                 continue
@@ -520,11 +536,14 @@ class Org(object):
                 self._add_heading_node(Heading(
                     depth=len(m.group('level')),
                     title=m.group('title'),
-                    default_depth=self.default_heading))
+                    default_depth=self.default_heading,
+                    ID=self.pending_id))
+                self.pending_id = None  # Clear after use
             elif self.regexps['blockquote_begin'].match(line):
                 self.bquote_flg = True
                 m = self.regexps['blockquote_begin'].match(line)
-                node = Blockquote(cite=m.group('cite'))
+                node = Blockquote(cite=m.group('cite'), ID=self.pending_id)
+                self.pending_id = None  # Clear after use
                 self.current.append(node)
                 self.current = node
             elif self.regexps['blockquote_end'].match(line):
@@ -539,7 +558,8 @@ class Org(object):
             elif self.regexps['src_begin'].match(line):
                 self.src_flg = True
                 m = self.regexps['src_begin'].match(line)
-                node = CodeBlock(src_type=m.group('src_type'))
+                node = CodeBlock(src_type=m.group('src_type'), ID=self.pending_id)
+                self.pending_id = None  # Clear after use
                 self.current.append(node)
                 self.current = node
             elif self.regexps['src_end'].match(line):

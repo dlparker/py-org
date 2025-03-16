@@ -1,4 +1,0 @@
-#+ID: abc-531
-* Centers
-Centers are part of [[id:abc-456][Trade Networks]], trading
-goods from [[id:abc-123][agriculture]]

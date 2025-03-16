@@ -4,6 +4,8 @@ from re import compile
 class Syntax(object):
     LINK = r'\[\[(?P<url>https?://.+?)\](?:\[(?P<subject>.+?)\])?\]'
     IMAGE = r'\[\[(?P<image>.+?)\](?:\[(?P<alt>.+?)\])?\]'
+    # New Org-roam link pattern
+    ROAM_LINK = r'\[\[id:(?P<id>[a-f0-9\-]+)\](?:\[(?P<title>.+?)\])?\]'
     BOLD = r'\*(?P<text>.+?)\*'
     ITALIC = r'/(?P<text>.+?)/'
     UNDERLINED = r'_(?P<text>.+?)_'
@@ -66,6 +68,7 @@ class TerminalNode(object):
     regexps = {
         'link': compile(Syntax.LINK),
         'image': compile(Syntax.IMAGE),
+        'roam_link': compile(Syntax.ROAM_LINK),  # Add this
         'bold': compile(Syntax.BOLD),
         'italic': compile(Syntax.ITALIC),
         'underlined': compile(Syntax.UNDERLINED),
@@ -90,6 +93,9 @@ class TerminalNode(object):
         elif self.regexps['code'].search(value):
             before, text, after = self.regexps['code'].split(value, 1)
             parsed = InlineCodeText(text)
+        elif self.regexps['roam_link'].search(value):  # Add this check
+            before, roam_id, title, after = self.regexps['roam_link'].split(value, 1)
+            parsed = OrgRoamLink(roam_id, title)
         elif self.regexps['link'].search(value):
             before, url, subject, after = self.regexps['link'].split(value, 1)
             parsed = Link(url, subject)
@@ -141,7 +147,20 @@ class TerminalNode(object):
         '''returns HTML close tag str'''
         raise NotImplementedError
 
+class OrgRoamLink(TerminalNode):
+    '''Org-roam Link Class'''
+    def __init__(self, roam_id, title):
+        self.roam_id = roam_id
+        if title is None:
+            title = roam_id  # Fallback to ID if no title
+        super().__init__(title)
 
+    def _get_open(self):
+        return '<a href="#{}">'.format(self.roam_id)
+
+    def _get_close(self):
+        return '</a>'
+    
 class Paragraph(Node):
     '''Paragraph Class'''
     def _get_open(self):

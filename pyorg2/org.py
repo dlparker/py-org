@@ -38,6 +38,7 @@ class Node(object):
         self.type_ = self.__class__.__name__
         self.children = []
         self.parent = parent
+        self.id_map = {}  # Map IDs to nodes
 
     def __str__(self):
         str_children = [str(child) for child in self.children]
@@ -49,7 +50,7 @@ class Node(object):
         self.children.append(child)
         child.parent = self
 
-    def html(self, br='', lstrip=False):
+    def html(self, br='', lstrip=False, id_map=None):
         '''Get HTML'''
         inner = br.join([child.html(br, lstrip) for child in self.children])
         return ''.join([self._get_open(), inner,  self._get_close()])
@@ -127,7 +128,9 @@ class TerminalNode(object):
     def __str__(self):
         return self.type_
 
-    def html(self, br='', lstrip=False):
+    def html(self, br='', lstrip=False, id_map=None):
+        if id_map is not None:
+            self.id_map.update(id_map)  # Merge external ID map
         content = ''
         for value in self.values:
             if isinstance(value, str):
@@ -136,7 +139,7 @@ class TerminalNode(object):
                 else:
                     content += value.rstrip()
             else:
-                content += value.html(br)
+                content += value.html(br, id_map=id_map)
         return self._get_open() + content + self._get_close()
 
     def _get_open(self):
@@ -148,13 +151,20 @@ class TerminalNode(object):
         raise NotImplementedError
 
 class OrgRoamLink(TerminalNode):
-    '''Org-roam Link Class'''
+
     def __init__(self, roam_id, title):
         self.roam_id = roam_id
         if title is None:
             title = roam_id  # Fallback to ID if no title
         super().__init__(title)
 
+    def html(self, br='', id_map=None):
+        if id_map and self.roam_id in id_map:
+            # Link to known ID
+            return f'<a href="#{self.roam_id}">{self.values[0]}</a>'
+        # Fallback if ID not found
+        return f'<a href="#{self.roam_id}" class="unresolved">{self.values[0]}</a>'
+    
     def _get_open(self):
         return '<a href="#{}">'.format(self.roam_id)
 
@@ -225,13 +235,15 @@ class InlineCodeText(Text):
     def _parse_value(self, value):
         return [value]
 
-    def html(self, br=''):
+    def html(self, br='', id_map=None):
+        if id_map is not None:
+            self.id_map.update(id_map)  # Merge external ID map
         content = ''
         for value in self.values:
             if isinstance(value, str):
                 content += value.strip()
             else:
-                content += value.html(br)
+                content += value.html(br, id_map=id_map)
         content = self.less_than.sub('&lt;', content)
         content = self.greater_than.sub('&gt;', content)
         return self._get_open() + content + self._get_close()
@@ -283,20 +295,22 @@ class CodeBlock(Node):
     def _get_close(self):
         return '</code></pre>'
 
-
 class Heading(Node):
-    '''Heading Class'''
-    def __init__(self, depth, title, default_depth=1):
-        self.depth = depth + (default_depth -1)
+    def __init__(self, depth, title, default_depth=1, heading_id=None):
+        self.depth = depth + (default_depth - 1)
         self.title = title
+        self.heading_id = heading_id  # Optional ID from properties
         super().__init__()
         self.type_ = 'Heading{}'.format(self.depth)
 
-    def html(self, br=''):
-        heading = self._get_open() + self.title + self._get_close()
-        content = ''.join([child.html(br) for child in self.children])
+    def html(self, br='', id_map=None):
+        if id_map is not None and self.heading_id:
+            id_map[self.heading_id] = self  # Register ID
+        attrs = f' id="{self.heading_id}"' if self.heading_id else ''
+        heading = f'<h{self.depth}{attrs}>{self.title}</h{self.depth}>'
+        content = ''.join(child.html(br, id_map) for child in self.children)
         return heading + content
-
+    
     def _get_open(self):
         return '<h{}>'.format(self.depth)
 
@@ -314,8 +328,10 @@ class List(Node):
             self.start = start
         super().__init__()
 
-    def html(self, br='', lstrip=False):
-        return super().html('', lstrip)
+    def html(self, br='', lstrip=False, id_map=None):
+        if id_map is not None:
+            self.id_map.update(id_map)  # Merge external ID map
+        return super().html('', lstrip, id_map=id_map)
 
 
 class ListItem(TerminalNode):
@@ -413,9 +429,11 @@ class TableRow(Node):
 
 class TableCell(Node):
     '''Table Cell Class'''
-    def html(self, br='', lstrip=False):
+    def html(self, br='', lstrip=False, id_map=None):
+        if id_map is not None:
+            self.id_map.update(id_map)  # Merge external ID map
         '''Get HTML'''
-        inner = br.join([child.html(br, True) for child in self.children])
+        inner = br.join([child.html(br, True, id_map=id_map) for child in self.children])
         return ''.join([self._get_open(), inner,  self._get_close()])
 
     def _get_open(self):
@@ -446,7 +464,9 @@ class Image(TerminalNode):
         self.src = src
         super().__init__(alt)
 
-    def html(self, br=''):
+    def html(self, br='', id_map=None):
+        if id_map is not None:
+            self.id_map.update(id_map)  # Merge external ID map):
         if self.values:
             return '<img src="{}" alt="{}">'.format(self.src, self.values[0]) + br
         else:
@@ -468,7 +488,7 @@ class Org(object):
         'tablerow': compile(Syntax.TABLE_ROW),
     }
 
-    def __init__(self, text, default_heading=1):
+    def __init__(self, text, default_heading=1, file_id=None):
         self.text = text
         self.children = []
         self.parent = self
@@ -476,6 +496,8 @@ class Org(object):
         self.bquote_flg = False
         self.src_flg = False
         self.default_heading = default_heading
+        self.file_id = file_id  # Optional ID from file metadata
+        self.id_map = {}  # Map IDs to nodes
         self._parse(self.text)
 
     def __str__(self):
@@ -484,6 +506,9 @@ class Org(object):
     def _parse(self, text):
         text = text.splitlines()
         for line in text:
+            # Check for #+ID: property
+            if line.startswith('#+ID:'):
+                self.file_id = line.split('#+ID:')[1].strip()
             if self.src_flg and not self.regexps['src_end'].match(line):
                 self.current.append(Text(line, noparse=True))
                 continue
@@ -633,8 +658,11 @@ class Org(object):
         self.children.append(child)
         child.parent = self
 
-    def html(self, br=''):
-        return br.join([child.html(br) for child in self.children])
+
+    def html(self, br='', id_map=None):
+        if id_map is not None:
+            self.id_map.update(id_map)  # Merge external ID map
+        return br.join(child.html(br, id_map=self.id_map) for child in self.children)
 
 
 def org_to_html(text, default_heading=1, newline=''):

@@ -1,5 +1,5 @@
 import pytest
-from pyorg2.org2 import (NestingNotValidError, Org, org_to_html, Heading, Paragraph,
+from pyorg2.org import (NestingNotValidError, Org, org_to_html, Heading, Paragraph,
                          UnOrderedList, OrderedList, ListItem, DefinitionList, Text)
 
 # TestOrg class converted to functions

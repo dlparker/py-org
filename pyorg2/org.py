@@ -4,9 +4,6 @@ from re import compile
 class Syntax(object):
     LINK = r'\[\[(?P<url>https?://.+?)\](?:\[(?P<subject>.+?)\])?\]'
     IMAGE = r'\[\[(?P<image>.+?)\](?:\[(?P<alt>.+?)\])?\]'
-    # New Org-roam link pattern
-    ROAM_LINK = r'\[\[id:(?P<id>[a-f0-9\-]+)\](?:\[(?P<title>.+?)\])?\]'
-    ID_PROPERTY = r'#\+ID:\s*(?P<id>[a-zA-Z0-9\-_]+)' 
     BOLD = r'\*(?P<text>.+?)\*'
     ITALIC = r'/(?P<text>.+?)/'
     UNDERLINED = r'_(?P<text>.+?)_'
@@ -17,7 +14,7 @@ class Syntax(object):
     HEADING = r'(?P<level>\*+)\s+(?P<title>.+)$'
     QUOTE_BEGIN = r'#\+BEGIN_QUOTE(?P<c>:)?(?(c)\s+(?P<cite>.+)|)$'
     QUOTE_END = r'#\+END_QUOTE$'
-    SRC_BEGIN = r'#\+BEGIN_SRC(?P<spc> )?(?(spc)\s*(?P<src_type>.+)|)$'
+    SRC_BEGIN = r'#\+BEGIN_SRC(?:\s+(?P<src_type>.+))?\s*$'
     SRC_END = r'#\+END_SRC'
     ORDERED_LIST = r'(?P<depth>\s*)\d+(\.|\))\s+(?P<item>.+)$'
     UNORDERED_LIST = r'(?P<depth>\s*)(-|\+)\s+(?P<item>.+)$'
@@ -28,19 +25,19 @@ class Syntax(object):
 class BaseError(Exception):
     pass
 
-
 class NestingNotValidError(BaseError):
     pass
 
-
 class Node(object):
-    '''Base class of all node'''
-    def __init__(self, parent=None, ID=None):
+    '''Base class for elements that may have children, nodes in a tree'''
+    
+    def __init__(self, org_root, parent=None):
         self.type_ = self.__class__.__name__
         self.children = []
         self.parent = parent
-        self.ID = ID
-        self.id_map = {}  # Map IDs to nodes
+        self.org_root = org_root
+        if self.parent is None:
+            self.parent = org_root
 
     def __str__(self):
         str_children = [str(child) for child in self.children]
@@ -48,11 +45,11 @@ class Node(object):
 
     def append(self, child):
         if isinstance(child, str):
-            child = Text(child)
+            child = Text(self, child)
         self.children.append(child)
         child.parent = self
 
-    def html(self, br='', lstrip=False, id_map=None):
+    def html(self, br='', lstrip=False):
         '''Get HTML'''
         inner = br.join([child.html(br, lstrip) for child in self.children])
         return ''.join([self._get_open(), inner,  self._get_close()])
@@ -67,11 +64,10 @@ class Node(object):
 
 
 class TerminalNode(object):
-    '''Base class of all terminal node'''
+    '''Base class of all elements that do not have children, may or may not be child of a tree'''
     regexps = {
         'link': compile(Syntax.LINK),
         'image': compile(Syntax.IMAGE),
-        'roam_link': compile(Syntax.ROAM_LINK),  
         'bold': compile(Syntax.BOLD),
         'italic': compile(Syntax.ITALIC),
         'underlined': compile(Syntax.UNDERLINED),
@@ -80,9 +76,10 @@ class TerminalNode(object):
         'monospace': compile(Syntax.MONOSPACE)
     }
 
-    def __init__(self, value, parent=None, noparse=False):
+    def __init__(self, org_root, value, parent=None, noparse=False):
         self.type_ = self.__class__.__name__
         self.noparse = noparse
+        self.org_root = org_root
         self.values = self._parse_value(value)
         self.parent = parent
 
@@ -95,31 +92,28 @@ class TerminalNode(object):
             parsed = value
         elif self.regexps['code'].search(value):
             before, text, after = self.regexps['code'].split(value, 1)
-            parsed = InlineCodeText(text)
-        elif self.regexps['roam_link'].search(value):  # Add this check
-            before, roam_id, title, after = self.regexps['roam_link'].split(value, 1)
-            parsed = OrgRoamLink(roam_id, title)
+            parsed = InlineCodeText(self, text)
         elif self.regexps['link'].search(value):
             before, url, subject, after = self.regexps['link'].split(value, 1)
-            parsed = Link(url, subject)
+            parsed = Link(self, url, subject)
         elif self.regexps['image'].search(value):
             before, src, alt, after = self.regexps['image'].split(value, 1)
-            parsed = Image(src, alt)
+            parsed = Image(self, src, alt)
         elif self.regexps['bold'].search(value):
             before, text, after = self.regexps['bold'].split(value, 1)
-            parsed = BoldText(text)
+            parsed = BoldText(self, text)
         elif self.regexps['italic'].search(value):
             before, text, after = self.regexps['italic'].split(value, 1)
-            parsed = ItalicText(text)
+            parsed = ItalicText(self, text)
         elif self.regexps['underlined'].search(value):
             before, text, after = self.regexps['underlined'].split(value, 1)
-            parsed = UnderlinedText(text)
+            parsed = UnderlinedText(self,text)
         elif self.regexps['linethrough'].search(value):
             before, text, after = self.regexps['linethrough'].split(value, 1)
-            parsed = LinethroughText(text)
+            parsed = LinethroughText(self,text)
         elif self.regexps['monospace'].search(value):
             before, text, after = self.regexps['monospace'].split(value, 1)
-            parsed = MonospaceText(text)
+            parsed = MonospaceText(self, text)
         else:
             before = after = None
             parsed = value
@@ -130,9 +124,7 @@ class TerminalNode(object):
     def __str__(self):
         return self.type_
 
-    def html(self, br='', lstrip=False, id_map=None):
-        if id_map is not None:
-            self.id_map.update(id_map)  # Merge external ID map
+    def html(self, br='', lstrip=False):
         content = ''
         for value in self.values:
             if isinstance(value, str):
@@ -141,7 +133,7 @@ class TerminalNode(object):
                 else:
                     content += value.rstrip()
             else:
-                content += value.html(br, id_map=id_map)
+                content += value.html(br)
         return self._get_open() + content + self._get_close()
 
     def _get_open(self):
@@ -152,34 +144,11 @@ class TerminalNode(object):
         '''returns HTML close tag str'''
         raise NotImplementedError
 
-class OrgRoamLink(TerminalNode):
 
-    def __init__(self, roam_id, title):
-        self.roam_id = roam_id
-        if title is None:
-            title = roam_id  # Fallback to ID if no title
-        super().__init__(title)
-
-    def html(self, br='', id_map=None):
-        if id_map and self.roam_id in id_map:
-            # Link to known ID
-            return f'<a href="#{self.roam_id}">{self.values[0]}</a>'
-        # Fallback if ID not found
-        return f'<a href="#{self.roam_id}" class="unresolved">{self.values[0]}</a>'
-    
-    def _get_open(self):
-        return '<a href="#{}">'.format(self.roam_id)
-
-    def _get_close(self):
-        return '</a>'
-    
 class Paragraph(Node):
     '''Paragraph Class'''
     def _get_open(self):
-        opt = ""
-        if self.ID:
-            opt = f" id={self.ID}"
-        return f'<p{opt}>'
+        return '<p>'
 
     def _get_close(self):
         return '</p>'
@@ -223,7 +192,6 @@ class UnderlinedText(Text):
     def _get_close(self):
         return '</span>'
 
-
 class LinethroughText(Text):
     '''Linethrough Text Class'''
     def _get_open(self):
@@ -232,7 +200,6 @@ class LinethroughText(Text):
     def _get_close(self):
         return '</span>'
 
-
 class InlineCodeText(Text):
     '''Inline Code Text Class'''
     less_than = compile(r'<')
@@ -240,15 +207,9 @@ class InlineCodeText(Text):
     def _parse_value(self, value):
         return [value]
 
-    def html(self, br='', id_map=None):
-        if id_map is not None:
-            self.id_map.update(id_map)  # Merge external ID map
+    def html(self, br=''):
         content = ''
-        for value in self.values:
-            if isinstance(value, str):
-                content += value.strip()
-            else:
-                content += value.html(br, id_map=id_map)
+        content = self.values[0].strip()
         content = self.less_than.sub('&lt;', content)
         content = self.greater_than.sub('&gt;', content)
         return self._get_open() + content + self._get_close()
@@ -271,18 +232,15 @@ class MonospaceText(Text):
 
 class Blockquote(Node):
     '''Blockquote Class'''
-    def __init__(self, cite=None, ID=None):
+    def __init__(self, org_root, cite=None):
         self.cite = cite
-        super().__init__(ID=ID)
+        super().__init__(org_root)
 
     def _get_open(self):
-        opt = ""
-        if self.ID:
-            opt = f" id={self.ID}"
         if self.cite:
-            return '<blockquote{} cite="{}">'.format(opt, self.cite)
+            return '<blockquote cite="{}">'.format(self.cite)
         else:
-            return f'<blockquote{opt}>'
+            return '<blockquote>'
 
     def _get_close(self):
         return '</blockquote>'
@@ -290,61 +248,52 @@ class Blockquote(Node):
 
 class CodeBlock(Node):
     ''' Block class Code Class '''
-    def __init__(self, src_type=None, ID=None):
+    def __init__(self, org_root, src_type=None):
         self.src_type = src_type
-        super().__init__(ID=ID)
+        super().__init__(org_root)
 
     def _get_open(self):
-        opt = ""
-        if self.ID:
-            opt = f" id={self.ID}"
         if self.src_type:
-            return '<pre{}><code class="{}">'.format(opt, self.src_type)
+            return '<pre><code class="{}">'.format(self.src_type)
         else:
-            return f'<pre{opt}><code>'
+            return '<pre><code>'
 
     def _get_close(self):
         return '</code></pre>'
 
+
 class Heading(Node):
-    def __init__(self, depth, title, default_depth=1, ID=None):
-        self.depth = depth + (default_depth - 1)
+    '''Heading Class'''
+    def __init__(self, org_root, depth, title, default_depth=1):
+        self.depth = depth + (default_depth -1)
         self.title = title
-        super().__init__(ID=ID)
+        super().__init__(org_root)
         self.type_ = 'Heading{}'.format(self.depth)
 
-    def html(self, br='', id_map=None):
-        if id_map is not None and self.ID:
-            id_map[self.ID] = self  # Register ID
-        attrs = f' id="{self.ID}"' if self.ID else ''
-        heading = f'<h{self.depth}{attrs}>{self.title}</h{self.depth}>'
-        content = ''.join(child.html(br, id_map) for child in self.children)
+    def html(self, br=''):
+        heading = self._get_open() + self.title + self._get_close()
+        content = ''.join([child.html(br) for child in self.children])
         return heading + content
-    
+
     def _get_open(self):
-        opt = ""
-        if self.ID:
-            opt = f" id={self.ID}"
-        return '<h{}{}>'.format(self.depth, opt)
+        return '<h{}>'.format(self.depth)
 
     def _get_close(self):
         return '</h{}>'.format(self.depth)
 
 
 class List(Node):
-    '''List Class'''
-    def __init__(self, depth, ordered, definition, start=1, ID=None):
+    '''Classes that make up a list derive from this base class, forming a tree'''
+    def __init__(self, org_root, depth, ordered, definition, start=1):
         self.depth = depth
         self.ordered = ordered
         self.definition = definition
         if self.ordered:
             self.start = start
-        super().__init__(ID=ID)
+        super().__init__(org_root)
 
-    def html(self, br='', lstrip=False, id_map=None):
-        if id_map is not None:
-            self.id_map.update(id_map)  # Merge external ID map
-        return super().html('', lstrip, id_map=id_map)
+    def html(self, br='', lstrip=False):
+        return super().html('', lstrip)
 
 
 class ListItem(TerminalNode):
@@ -358,8 +307,8 @@ class ListItem(TerminalNode):
 
 class OrderedList(List):
     '''Shortcut Class of Ordered List'''
-    def __init__(self, depth, start=1):
-        super().__init__(depth, True, False, start)
+    def __init__(self, org_root, depth, start=1):
+        super().__init__(org_root, depth, True, False, start)
 
     def _get_open(self):
         return '<ol>'
@@ -370,8 +319,8 @@ class OrderedList(List):
 
 class UnOrderedList(List):
     '''Shortcut Class of UnOrdered List'''
-    def __init__(self, depth):
-        super().__init__(depth, False, False)
+    def __init__(self, org_root, depth):
+        super().__init__(org_root, depth, False, False)
 
     def _get_open(self):
         return '<ul>'
@@ -382,8 +331,8 @@ class UnOrderedList(List):
 
 class DefinitionList(List):
     '''Shortcut Class of Definition List'''
-    def __init__(self, depth):
-        super().__init__(depth, False, True)
+    def __init__(self, org_root, depth):
+        super().__init__(org_root, depth, False, True)
 
     def _get_open(self):
         return '<dl>'
@@ -394,10 +343,10 @@ class DefinitionList(List):
 
 class DefinitionListItem(Node):
     '''Definition List Item Class'''
-    def __init__(self, title, description, ID=None):
-        super().__init__(ID=ID)
-        self.children.append(DefinitionListItemTitle(title))
-        self.children.append(DefinitionListItemDescription(description))
+    def __init__(self, org_root, title, description):
+        super().__init__(org_root)
+        self.children.append(DefinitionListItemTitle(org_root, title))
+        self.children.append(DefinitionListItemDescription(org_root, description))
 
     def _get_open(self):
         return ''
@@ -442,11 +391,9 @@ class TableRow(Node):
 
 class TableCell(Node):
     '''Table Cell Class'''
-    def html(self, br='', lstrip=False, id_map=None):
-        if id_map is not None:
-            self.id_map.update(id_map)  # Merge external ID map
+    def html(self, br='', lstrip=False):
         '''Get HTML'''
-        inner = br.join([child.html(br, True, id_map=id_map) for child in self.children])
+        inner = br.join([child.html(br, True) for child in self.children])
         return ''.join([self._get_open(), inner,  self._get_close()])
 
     def _get_open(self):
@@ -458,11 +405,11 @@ class TableCell(Node):
 
 class Link(TerminalNode):
     '''Link Class'''
-    def __init__(self, href, title):
+    def __init__(self, org_root, href, title):
         self.href = href
         if title is None:
             title = href
-        super().__init__(title)
+        super().__init__(org_root, title)
 
     def _get_open(self):
         return '<a href="{}">'.format(self.href)
@@ -473,13 +420,11 @@ class Link(TerminalNode):
 
 class Image(TerminalNode):
     '''Image Class'''
-    def __init__(self, src, alt=""):
+    def __init__(self, org_root, src, alt=""):
         self.src = src
-        super().__init__(alt)
+        super().__init__(org_root, alt)
 
-    def html(self, br='', id_map=None):
-        if id_map is not None:
-            self.id_map.update(id_map)  # Merge external ID map):
+    def html(self, br=''):
         if self.values:
             return '<img src="{}" alt="{}">'.format(self.src, self.values[0]) + br
         else:
@@ -491,7 +436,6 @@ class Org(object):
     regexps = {
         'whiteline': compile(Syntax.WHITELINE),
         'heading': compile(Syntax.HEADING),
-        'id_property': compile(Syntax.ID_PROPERTY),
         'blockquote_begin': compile(Syntax.QUOTE_BEGIN),
         'blockquote_end': compile(Syntax.QUOTE_END),
         'src_begin': compile(Syntax.SRC_BEGIN),
@@ -502,7 +446,7 @@ class Org(object):
         'tablerow': compile(Syntax.TABLE_ROW),
     }
 
-    def __init__(self, text, default_heading=1, file_id=None):
+    def __init__(self, text, default_heading=1):
         self.text = text
         self.children = []
         self.parent = self
@@ -510,9 +454,6 @@ class Org(object):
         self.bquote_flg = False
         self.src_flg = False
         self.default_heading = default_heading
-        self.file_id = file_id  # Optional ID from file metadata
-        self.id_map = {}  # Map IDs to nodes
-        self.pending_id = None  # Track ID until next content
         self._parse(self.text)
 
     def __str__(self):
@@ -521,12 +462,8 @@ class Org(object):
     def _parse(self, text):
         text = text.splitlines()
         for line in text:
-            # Check for #+ID: property
-            if self.regexps['id_property'].match(line):
-                m = self.regexps['id_property'].match(line)
-                self.pending_id = m.group('id')  # Set pending ID
             if self.src_flg and not self.regexps['src_end'].match(line):
-                self.current.append(Text(line, noparse=True))
+                self.current.append(Text(self, line, noparse=True))
                 continue
             if self.regexps['heading'].match(line):
                 m = self.regexps['heading'].match(line)
@@ -534,16 +471,14 @@ class Org(object):
                        not isinstance(self.current, Org)):
                     self.current = self.current.parent
                 self._add_heading_node(Heading(
+                    org_root=self,
                     depth=len(m.group('level')),
                     title=m.group('title'),
-                    default_depth=self.default_heading,
-                    ID=self.pending_id))
-                self.pending_id = None  # Clear after use
+                    default_depth=self.default_heading))
             elif self.regexps['blockquote_begin'].match(line):
                 self.bquote_flg = True
                 m = self.regexps['blockquote_begin'].match(line)
-                node = Blockquote(cite=m.group('cite'), ID=self.pending_id)
-                self.pending_id = None  # Clear after use
+                node = Blockquote(org_root=self, cite=m.group('cite'))
                 self.current.append(node)
                 self.current = node
             elif self.regexps['blockquote_end'].match(line):
@@ -558,18 +493,13 @@ class Org(object):
             elif self.regexps['src_begin'].match(line):
                 self.src_flg = True
                 m = self.regexps['src_begin'].match(line)
-                node = CodeBlock(src_type=m.group('src_type'), ID=self.pending_id)
-                self.pending_id = None  # Clear after use
+                node = CodeBlock(org_root=self, src_type=m.group('src_type'))
                 self.current.append(node)
                 self.current = node
             elif self.regexps['src_end'].match(line):
                 if not self.src_flg:
                     raise NestingNotValidError
                 self.src_flg = False
-                while not isinstance(self.current, CodeBlock):
-                    if isinstance(self.current, Org):
-                        raise NestingNotValidError
-                    self.current = self.current.parent
                 self.current = self.current.parent
             elif self.regexps['orderedlist'].match(line):
                 while isinstance(self.current, Paragraph):
@@ -594,22 +524,19 @@ class Org(object):
                     self.current = self.current.parent
             elif (not isinstance(self.current, Heading) and
                   isinstance(self.current, Node)):
-                self.current.append(Text(line))
+                self.current.append(Text(self, line))
             else:
-                node = Paragraph()
+                node = Paragraph(org_root=self)
                 self.current.append(node)
                 self.current = node
-                self.current.append(Text(line))
+                self.current.append(Text(self, line))
         if self.bquote_flg or self.src_flg:
             raise NestingNotValidError
 
-    def _is_deeper(self, cls, depth, eq=False):
-        if isinstance(self.current, cls) and not eq:
+    def _is_deeper(self, cls, depth):
+        if isinstance(self.current, cls):
             return depth > self.current.depth
-        elif isinstance(self.current, cls) and eq:
-            return depth >= self.current.depth
-        else:
-            return False
+        return False
 
     def _is_shallower(self, cls, depth, eq=False):
         if isinstance(self.current, cls) and not eq:
@@ -629,12 +556,12 @@ class Org(object):
         is_listclass = isinstance(self.current, listclass)
         depth = len(m.group('depth'))
         if self._is_deeper(listclass, depth) or not is_listclass:
-            listnode = listclass(depth=len(m.group('depth')))
+            listnode = listclass(org_root=self, depth=len(m.group('depth')))
             self.current.append(listnode)
             self.current = listnode
         while self._is_shallower(listclass, depth):
             self.current = self.current.parent
-        self.current.append(ListItem(m.group('item')))
+        self.current.append(ListItem(self, m.group('item')))
 
     def _add_olist_node(self, m):
         self._add_list_node(m, listclass=OrderedList)
@@ -646,26 +573,26 @@ class Org(object):
         is_definitionlist = isinstance(self.current, DefinitionList)
         depth = len(m.group('depth'))
         if self._is_deeper(DefinitionList, depth) or not is_definitionlist:
-            listnode = DefinitionList(depth=len(m.group('depth')))
+            listnode = DefinitionList(org_root=self, depth=len(m.group('depth')))
             self.current.append(listnode)
             self.current = listnode
         while (isinstance(self.current, DefinitionList) and
                len(m.group('depth')) < self.current.depth):
             self.current = self.current.parent
         self.current.append(
-            DefinitionListItem(m.group('item'), m.group('desc')))
+            DefinitionListItem(self, m.group('item'), m.group('desc')))
 
     def _add_tablerow(self, m):
         cells = [c for c in m.group('cells').split('|') if c != '']
         if not isinstance(self.current, Table):
-            tablenode = Table()
+            tablenode = Table(org_root=self)
             self.current.append(tablenode)
             self.current = tablenode
-        rownode = TableRow()
+        rownode = TableRow(org_root=self)
         self.current.append(rownode)
         self.current = rownode
         for cell in cells:
-            cellnode = TableCell()
+            cellnode = TableCell(org_root=self)
             self.current.append(cellnode)
             self.current = cellnode
             self._parse(cell)
@@ -674,15 +601,12 @@ class Org(object):
 
     def append(self, child):
         if isinstance(child, str):
-            child = Text(child)
+            child = Text(self, child)
         self.children.append(child)
         child.parent = self
 
-
-    def html(self, br='', id_map=None):
-        if id_map is not None:
-            self.id_map.update(id_map)  # Merge external ID map
-        return br.join(child.html(br, id_map=self.id_map) for child in self.children)
+    def html(self, br=''):
+        return br.join([child.html(br) for child in self.children])
 
 
 def org_to_html(text, default_heading=1, newline=''):

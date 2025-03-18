@@ -10,19 +10,12 @@ from pyorg2.tree import (Root, Branch, Section, Heading, Text, Paragraph, BlankL
                          DefinitionListItemTitle, DefinitionListItemDescription,
                          Table, TableRow, TableCell, Link, Image, InternalLink)
 
-
+    
 def test_everything_1():
-    inner_test_everything()
-    
-def test_everything_2():
-    inner_test_everything(False)
-    
-def inner_test_everything(heading_on_first=True):
 
     root = Root('foo')
     heading_text = None
-    if heading_on_first:
-        heading_text = "Top Heading"
+    heading_text = "Top Heading"
     top = Section(root.trunk, heading_text=heading_text)
     top_para = Paragraph(top)
     top_text = Text(top_para, "Some beautiful Text")
@@ -36,7 +29,9 @@ def inner_test_everything(heading_on_first=True):
     mid_para_2 = Paragraph(mid)
     mid_text_3 = Text(mid_para_2, "Lot to say.")
     mid_text_4 = Text(mid_para_2, "Running on.")
-
+    mid_2 = Section(mid, heading_text="Middle Section Subsection")
+    mid_2_para_1 = Paragraph(mid_2)
+    mid_2_text_1 = Text(mid_2_para_1, "In Deep!.")
     
     text_section = Section(root.trunk, heading_text="Text Section")
     text_para = Paragraph(text_section)
@@ -51,33 +46,30 @@ def inner_test_everything(heading_on_first=True):
     bq_text = Text(block_quote, 'Should be in block quote')
     text_text_1 = Text(text_para, "That's all folks.")
 
-    list_section = Section(root.trunk, heading_text="List Section")
-    list1 = List(list_section)
-    li1 = ListItem(list1, 1,  "List 1 item 1")
-    li2 = ListItem(list1, 1, "List 1 item 2")
-    li2a = ListItem(li2, 2,  "List 1 item 2-a")
-    li2a1 = ListItem(li2a, 3, "List 1 item 2-a-1")
-
     olist_section = Section(root.trunk, heading_text="OrderedList Section")
     olist1 = OrderedList(olist_section)
     oli1 = OrderedListItem(olist1, 1, "List 1 item o-1")
     oli2 = OrderedListItem(olist1, 1, "List 1 item o-2")
-    oli2a = OrderedListItem(oli2, 2, "List 1 item o-2-a")
-    oli2a1 = OrderedListItem(oli2a, 3, "List 1 item o-2-a-1")
+    olist2 = List(oli2)
+    oli2a = OrderedListItem(olist2, 2, "List 1 item o-2-a")
+    olist3 = List(oli2a)
+    oli2a1 = OrderedListItem(olist3, 3, "List 1 item o-2-a-1")
 
     ulist_section = Section(root.trunk, heading_text="UnorderedList Section")
     ulist1 = UnorderedList(ulist_section)
     uli1 = UnorderedListItem(ulist1, 1, "List 1 item u-1")
     uli2 = UnorderedListItem(ulist1, 1, "List 1 item u-2")
-    uli2a = UnorderedListItem(uli2, 2, "List 1 item u-2-a")
-    uli2a1 = UnorderedListItem(uli2a, 3, "List 1 item u-2-a-1")
+    ulist2 = UnorderedList(uli2)
+    uli2a = UnorderedListItem(ulist2, 2, "List 1 item u-2-a")
+    ulist2a = UnorderedList(uli2a)
+    uli2a1 = UnorderedListItem(ulist2a, 3, "List 1 item u-2-a-1")
 
     dlist_section = Section(root.trunk, heading_text="DictionaryList Section")
     dlist1 = DefinitionList(dlist_section)
-    dli1_title = DefinitionListItemTitle(dlist1, [Text(root.trunk, "I1"),])
+    dli1_title = DefinitionListItemTitle(dlist1, [Text(root.trunk, "DicTitle1"),])
     # make a descripion with multiple text items and a TargetText
     # because that could happen!
-    bits = [Text(root, "D1"),  TargetText(root, "Target 2"), Text(root, "D2")]
+    bits = [Text(root, "DictDesc1 start "),  TargetText(root, "Target 2"), Text(root, "DictDescEnd")]
     dli1_desc = DefinitionListItemDescription(dlist1, bits)
     dli1_item = DefinitionListItem(dlist1, dli1_title, dli1_desc)
 
@@ -98,5 +90,6 @@ def inner_test_everything(heading_on_first=True):
     link_1 = Link(link_section, "https://x.com", "Link to X")
     link_2 = InternalLink(link_section, "Target 3", "Internal link to Target 3")
     
-    print(json.dumps(root, default=lambda o:o.to_json_dict(), indent=4))
+    #print(json.dumps(root, default=lambda o:o.to_json_dict(), indent=4))
     
+    print(root.to_html())

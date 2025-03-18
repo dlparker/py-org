@@ -19,6 +19,21 @@ class Root:
                    props=dict(source=self.source,
                    trunk=self.trunk.to_json_dict()))
         return res
+
+    def to_html(self, wrap=True, make_pretty=True):
+        indent_level = 0
+        lines = []
+        if wrap:
+            lines.append("<html>")
+            lines.append("<body>")
+        lines.extend(self.trunk.to_html(indent_level))
+        lines.append("</body>")
+        if make_pretty:
+            return "\n".join(lines)
+        stripped = []
+        for line in lines:
+            stripped.append(line.strip())
+        return "".join(lines)
     
     def __str__(self):
         return f"root from source {self.source}"
@@ -50,6 +65,17 @@ class Branch:
                    source=self.source, nodes=[n.to_json_dict() for n in self.children]))
         return res
 
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("div", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for node in self.children:
+            lines.extend(node.to_html(indent_level))
+        lines.append(padding + '</div>')
+        return lines
+    
     def __str__(self):
         return f"(self.node_id) branch from source {self.source}"
     
@@ -106,6 +132,13 @@ class BlankLine(Node):
     def __init__(self, parent):
         super().__init__(parent)
     
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        line1 = " " * indent_level  * 4
+        line1 += "<br>"
+        return [line1,]
+    
 class Container(Node):
     """ This node contains one or more other nodes but does not directly contain text."""
     def __init__(self, parent, content=None):
@@ -119,6 +152,17 @@ class Container(Node):
         if node not in self.children:
             self.children.append(node)
         
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("div", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for child in self.children:
+            lines.extend(child.to_html(indent_level))
+        lines.append(padding + '</div>')
+        return lines
+    
     def to_json_dict(self):
         # don't include back links, up the tree
         res = super().to_json_dict()
@@ -127,19 +171,33 @@ class Container(Node):
     
 class Section(Container):
     """ This type of Container starts with a heading, or at the beginning of the file.
-    It may have a set of properties from a "drawer". A section that starts at the beginning
-    of the file or buffer, or one that has a top level heading (one *) will have no parent
-    below the root.  Other sections can be contained by one of these "top level" sections.
+    It may have a set of properties from a "drawer". 
     """
-    def __init__(self, parent, heading_text=None):
+    def __init__(self, parent, heading_text):
         super().__init__(parent)
-        if heading_text:
-            self.heading = Heading(parent=self, text=heading_text)
-        else:
-            self.heading = None
+        par = self.parent
+        wraps = 0
+        while not isinstance(par, Branch):
+            if isinstance(par, Section):
+                wraps += 1
+            par = par.parent
+        level = wraps + 1
+        self.heading = Heading(parent=self, text=heading_text, level=level)
 
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("div", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        if self.heading:
+            lines.extend(self.heading.to_html(indent_level))
+        for node in self.children:
+            lines.extend(node.to_html(indent_level))
+        lines.append(padding + '</div>')
+        return lines
+    
     def to_json_dict(self):
-        
         if self.heading:
             res = dict(cls=str(self.__class__),
                    props=dict(heading=self.heading.to_json_dict()))
@@ -163,6 +221,13 @@ class Text(Node):
         super().__init__(parent)
         self.text = text
 
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("span", indent_level, self)
+        line1 += f"'>{self.text}</span>"
+        return [line1,]
+    
     def to_json_dict(self):
         res = super().to_json_dict()
         res['props']['text'] = self.text
@@ -177,7 +242,14 @@ class Heading(Node):
         self.text = text
         self.level = level
         self.properties = {}
-    
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open(f"h{self.level}", indent_level, self)
+        line1 += f">{self.text}</h{self.level}>"
+        return [line1,]
+        
     def to_json_dict(self):
         res = super().to_json_dict()
         res['props']['text'] = self.text
@@ -257,8 +329,23 @@ class ListItem(Container):
     def __init__(self, parent, level=1, plain_text=None):
         super().__init__(parent)
         if plain_text:
-            text = Text(self, plain_text)
+            self.text = Text(self, plain_text)
+        self.text = None
         self.level = level
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("li", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        if self.text:
+            lines.extend(self.text.to_html(intent_level))
+        else:
+            for node in self.children:
+                lines.extend(node.to_html(indent_level))
+        lines.append(padding + '</li>')
+        return lines
 
     def to_json_dict(self):
         ## fiddle the resluts around to make it easier to understand
@@ -270,19 +357,52 @@ class ListItem(Container):
         return res
     
 class OrderedList(List):
-    pass
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("ol", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for node in self.children:
+            lines.extend(node.to_html(indent_level))
+        lines.append(padding + '</ol>')
+        return lines
+
 
 class OrderedListItem(ListItem):
     pass
 
 class UnorderedList(List):
-    pass
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("ul", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for node in self.children:
+            lines.extend(node.to_html(indent_level))
+        lines.append(padding + '</ul>')
+        return lines
+
 
 class UnorderedListItem(ListItem):
     pass
 
 class DefinitionList(List):
-    pass
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("dl", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for node in self.children:
+            lines.extend(node.to_html(indent_level))
+        lines.append(padding + '</dl>')
+        return lines
+
 
 class DefinitionListItem(ListItem):
 
@@ -298,6 +418,13 @@ class DefinitionListItem(ListItem):
         self.title = title
         self.description = description
 
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        lines.extend(self.title.to_html(indent_level))
+        lines.extend(self.description.to_html(indent_level))
+        return lines
+
     def to_json_dict(self):
         ## fiddle the resluts around to make it easier to understand
         ## by getting the children last
@@ -309,19 +436,70 @@ class DefinitionListItem(ListItem):
         return res
     
 class DefinitionListItemTitle(Container):
-    pass
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("dt", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for child in self.children:
+            lines.extend(child.to_html(indent_level))
+        lines.append(padding + '</dt>')
+        return lines
 
 class DefinitionListItemDescription(Container):
-    pass
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("dd", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for child in self.children:
+            lines.extend(child.to_html(indent_level))
+        lines.append(padding + '</dd>')
+        return lines
 
 class Table(Container):
-    pass
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("table", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for child in self.children:
+            lines.extend(child.to_html(indent_level))
+        lines.append(padding + '</table>')
+        return lines
 
 class TableRow(Container):
-    pass
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("tr", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for child in self.children:
+            lines.extend(child.to_html(indent_level))
+        lines.append(padding + '</tr>')
+        return lines
 
 class TableCell(Container):
-    pass
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("td", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        for child in self.children:
+            lines.extend(child.to_html(indent_level))
+        lines.append(padding + '</td>')
+        return lines
+
 
 class Link(Container):
 
@@ -331,6 +509,16 @@ class Link(Container):
         self.target_text = target_text
         self.display_text = display_text
 
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("a", indent_level, self)
+        line1 += f' href="{self.target_text}">'
+        lines.append(line1)
+        if self.display_text:
+            lines.append(padding + "   " + self.display_text)
+        lines.append(padding + '</a>')
+        return lines
 
     def to_json_dict(self):
         ## fiddle the resluts around to make it easier to understand
@@ -348,6 +536,16 @@ class Image(Node):
         self.src_text = src_text
         self.alt_text = alt_text
 
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("img", indent_level, self)
+        line1 += f' src="{self.src_text}"'
+        if self.alt_text:
+            line1 += f' alt="{self.alt_text}>"'
+        line1 += '</img>'
+        return [line1,]
+
     def to_json_dict(self):
         ## fiddle the resluts around to make it easier to understand
         ## by getting the children last
@@ -360,7 +558,13 @@ class Image(Node):
 class InternalLink(Link):
     pass
 
-
+def setup_tag_open(tag, indent_level, obj):
+    padding = " " * indent_level  * 4
+    line1 = padding
+    line1 += f'<{tag} id="obj-{obj.node_id}" '
+    line1 += f'class="org-auto-{obj.__class__.__name__}"'
+    return padding, line1
+    
 
 
 

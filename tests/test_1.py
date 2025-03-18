@@ -24,12 +24,6 @@ line2'''
     assert isinstance(target.children[2], Text)
     assert "line3" in target.children[2].get_text()
 
-def test_org_append_str():
-    text = 'line1'
-    o = Org(text)
-    assert str(o) == 'Org(Paragraph(Text))'
-    o.append("line3")
-    assert "line3" in o.html()
 
 def test_new_paragraph():
     text = '''para1-1
@@ -134,7 +128,7 @@ def test_endless_src():
         Org(text)
 
 def test_orderedlist():
-    text = '''1. listitem1
+    text = '''1. listitem1 
 2. listitem2
 3) listitem3
 4) listitem4'''
@@ -532,3 +526,51 @@ def test_definitionlist_after_paragraph():
     # Parse unwinds from Paragraph to Org for DefinitionList
     assert isinstance(o.children[0], Paragraph)
     assert isinstance(o.children[1], DefinitionList)        
+
+
+def test_internal_link_explicit_1():
+    text = '''<<target>>
+[[#target][Go to target]]'''
+    o = Org(text)
+    assert o.html() == 'target<a href="#target">Go to target</a>'
+
+def test_internal_link_explicit_2():
+    text = '''foo bar bee
+<<target>>
+[[#target][Go to target]]'''
+    o = Org(text)
+    print('\n', o.html())
+    assert 'target<a href="#target">Go to target</a>' in o.html() 
+
+def test_internal_link_explicit_in_quote():
+    text = '''#+BEGIN_QUOTE
+<<target>>
+[[#target][Go to target]]
+#+END_QUOTE'''
+    o = Org(text)
+    print("\n", o.html())
+    assert '<a href="#target">Go to target</a>' in o.html()
+    
+def test_internal_link_heading():
+    text = '''* My Heading
+[[#My Heading][Go to heading]]'''
+    o = Org(text)
+    assert o.html() == '<h1>My Heading</h1><a href="#my-heading">Go to heading</a>'
+
+def test_internal_link_unresolved():
+    text = '''[[#missing][Go nowhere]]'''
+    o = Org(text)
+    assert o.html() == 'Go nowhere'  # No <a> tag    
+
+def test_explicit_target_styles():
+    text = '''* A heading <<target1>>
+some text after the heading <<target2>>
+1. An ordered List <<target3>>
+2. Foo
+
+- An unordered list
+- with some text
+  - and a target inside <<target4>>
+'''
+    o = Org(text)
+    print('\n', o.html())

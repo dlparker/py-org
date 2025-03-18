@@ -1,5 +1,18 @@
 from re import compile
+from slugify import slugify  
 
+
+# types that can CONATAIN target
+# Text (and kids)
+# ListItem 
+
+# types that ARE targets
+# Heading (is by default)
+
+# types that can be designated a target by have #+NAME pre-line
+# Table
+# Para (if it is just a blank spot, emacs tries to make a header)
+# quotes, block quotes code block codes
 
 class Syntax(object):
     LINK = r'\[\[(?P<url>https?://.+?)\](?:\[(?P<subject>.+?)\])?\]'
@@ -20,6 +33,9 @@ class Syntax(object):
     UNORDERED_LIST = r'(?P<depth>\s*)(-|\+)\s+(?P<item>.+)$'
     DEF_LIST = r'(?P<depth>\s*)(-|\+)\s+(?P<item>.+?)\s*::\s*(?P<desc>.+)$'
     TABLE_ROW = r'\s*\|(?P<cells>(.+\|)+)s*$'
+    # [[#anchor][title]] or [[#anchor]]
+    INTERNAL_LINK = r'\[\[#(?P<anchor>[^][]+?)\](?:\[(?P<title>.+?)\])?\]'
+    TARGET = r'<<(?P<target>[^>]+)>>'  # <<target>>
 
 
 class BaseError(Exception):
@@ -28,14 +44,37 @@ class BaseError(Exception):
 class NestingNotValidError(BaseError):
     pass
 
-class Node(object):
+class OrgElement:
+
+    def __init__(self, org_root):
+        self.org_root = org_root
+        self.is_target = False
+        # if element is a target, this is the "link to" text
+        self.target_string = None 
+
+class Target:
+
+    def __init__(self, org_root, target_text, target_element):
+        self.org_root = org_root
+        self.target_text = target_text
+        self.target_element = target_element
+        # guarantees uniqueness even of the target_text does not
+        self.target_id = org_root.create_target_id(self)
+
+    def link_matches(self, link_text):
+        pass
+
+    def get_html_id(self):
+        return self.target_id
+        
+class Node(OrgElement):
     '''Base class for elements that may have children, nodes in a tree'''
     
     def __init__(self, org_root, parent=None):
+        super().__init__(org_root)
         self.type_ = self.__class__.__name__
         self.children = []
         self.parent = parent
-        self.org_root = org_root
         if self.parent is None:
             self.parent = org_root
 
@@ -63,7 +102,7 @@ class Node(object):
         raise NotImplementedError
 
 
-class TerminalNode(object):
+class TerminalNode(OrgElement):
     '''Base class of all elements that do not have children, may or may not be child of a tree'''
     regexps = {
         'link': compile(Syntax.LINK),
@@ -77,6 +116,7 @@ class TerminalNode(object):
     }
 
     def __init__(self, org_root, value, parent=None, noparse=False):
+        super().__init__(org_root)
         self.type_ = self.__class__.__name__
         self.noparse = noparse
         self.org_root = org_root
@@ -144,6 +184,20 @@ class TerminalNode(object):
         '''returns HTML close tag str'''
         raise NotImplementedError
 
+class InternalLink(TerminalNode):
+
+    def __init__(self, org_root, anchor, title):
+        self.anchor = anchor
+        self.resolved = False  # Track resolution status
+        super().__init__(org_root, title or anchor)
+
+    def _get_open(self):
+        if self.resolved:
+            return f'<a href="#{self.anchor}">'
+        return ''  # Unresolved: no link
+
+    def _get_close(self):
+        return '</a>' if self.resolved else ''
 
 class Paragraph(Node):
     '''Paragraph Class'''
@@ -152,7 +206,6 @@ class Paragraph(Node):
 
     def _get_close(self):
         return '</p>'
-
 
 class Text(TerminalNode):
     '''Text Class'''
@@ -444,18 +497,30 @@ class Org(object):
         'unorderedlist': compile(Syntax.UNORDERED_LIST),
         'definitionlist': compile(Syntax.DEF_LIST),
         'tablerow': compile(Syntax.TABLE_ROW),
+        'internal_link': compile(Syntax.INTERNAL_LINK),
+        'target': compile(Syntax.TARGET),
     }
 
-    def __init__(self, text, default_heading=1):
+    def __init__(self, text, default_heading=1, parent=None):
         self.text = text
         self.children = []
-        self.parent = self
+        if parent is None:
+            self.parent = self
+        else:
+            self.parent = parent
         self.current = self
         self.bquote_flg = False
         self.src_flg = False
         self.default_heading = default_heading
+        self.targets = {}  # Map of <<target>> to nodes
         self._parse(self.text)
 
+    def create_target_id(self, target):
+        index = len(self.targets) + 1
+        target_id = f'target-{index}-{slugify(target.target_text)}'
+        self.targets[target.target_text] = target
+        return target_id
+        
     def __str__(self):
         return 'Org(' + ' '.join([str(child) for child in self.children]) + ')'
 
@@ -475,6 +540,17 @@ class Org(object):
                     depth=len(m.group('level')),
                     title=m.group('title'),
                     default_depth=self.default_heading))
+            elif self.regexps['internal_link'].match(line):
+                m = self.regexps['internal_link'].match(line)
+                node = InternalLink(self, m.group('anchor'), m.group('title'))
+                self.current.append(node)
+            elif self.regexps['target'].match(line) and False:
+                m = self.regexps['target'].match(line)
+                target = m.group('target')
+                node = Text(self, target)  # Could be a custom Target node if needed
+                self.current.append(node)
+                self.targets[target] = node  # Store for resolution
+                node.is_target = True
             elif self.regexps['blockquote_begin'].match(line):
                 self.bquote_flg = True
                 m = self.regexps['blockquote_begin'].match(line)
@@ -522,9 +598,15 @@ class Org(object):
             elif not line:
                 if isinstance(self.current, Paragraph):
                     self.current = self.current.parent
-            elif (not isinstance(self.current, Heading) and
-                  isinstance(self.current, Node)):
-                self.current.append(Text(self, line))
+            elif (not isinstance(self.current, Heading) and isinstance(self.current, Node)):
+                if self.regexps['internal_link'].search(line):  # Inline links
+                    self.current.append(Text(self, line))  # Let TerminalNode parse it
+                elif self.regexps['target'].search(line):  # Inline target
+                    self.current.append(Text(self, line))
+                    m = self.regexps['target'].search(line)
+                    self.targets[m.group('target')] = self.current
+                else:
+                    self.current.append(Text(self, line))
             else:
                 node = Paragraph(org_root=self)
                 self.current.append(node)
@@ -600,14 +682,39 @@ class Org(object):
         self.current = self.current.parent
 
     def append(self, child):
-        if isinstance(child, str):
-            child = Text(self, child)
         self.children.append(child)
         child.parent = self
 
-    def html(self, br=''):
-        return br.join([child.html(br) for child in self.children])
+    def resolve_links(self):
+        # Build heading map
+        heading_map = {}
+        def collect_headings(node):
+            if isinstance(node, Heading):
+                heading_map[node.title] = f"#{slugify(node.title)}"
+            if isinstance(node, Node) or node == self:
+                for child in node.children:
+                    collect_headings(child)
+        collect_headings(self)
 
+        # Resolve links
+        def resolve_node(node):
+            if isinstance(node, InternalLink):
+                if node.anchor in self.targets:
+                    node.resolved = True
+                elif node.anchor in heading_map:
+                    node.anchor = heading_map[node.anchor][1:]
+                    node.resolved = True
+                # Else: stays unresolved, renders as text
+            if isinstance(node, Node) or node == self:
+                for child in node.children:
+                    resolve_node(child)
+        resolve_node(self)
+
+    def html(self, br=''):
+        self.resolve_links()  # Run before rendering
+        return br.join([child.html(br) for child in self.children])
 
 def org_to_html(text, default_heading=1, newline=''):
     return Org(text, default_heading).html(newline)
+
+

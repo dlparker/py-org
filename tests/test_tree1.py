@@ -98,6 +98,5 @@ def inner_test_everything(heading_on_first=True):
     link_1 = Link(link_section, "https://x.com", "Link to X")
     link_2 = InternalLink(link_section, "Target 3", "Internal link to Target 3")
     
-    
     print(json.dumps(root, default=lambda o:o.to_json_dict(), indent=4))
     

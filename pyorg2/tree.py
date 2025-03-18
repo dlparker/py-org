@@ -1,4 +1,3 @@
-import json
 
 class Root:
     """ The base of the tree. The source designates the first source file or buffer parsed to
@@ -21,9 +20,6 @@ class Root:
                    trunk=self.trunk.to_json_dict()))
         return res
     
-    def to_json(self, indent=None):
-        return json.dumps(self.to_json_dict())
-
     def __str__(self):
         return f"root from source {self.source}"
     

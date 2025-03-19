@@ -71,7 +71,7 @@ class Root:
             out_lines.append("  </style>")
             out_lines.append("  <script>")
             obj_tree = json.dumps(self, default=lambda o:o.to_json_dict(), indent=4)
-            out_lines.append(f"      obj_tree = '{obj_tree}'")
+            out_lines.append(f"      var obj_tree = {obj_tree};")
             out_lines.append("  </script>")
             out_lines.append(" </head>")
             out_lines.append("<body>")

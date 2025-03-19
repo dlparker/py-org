@@ -15,6 +15,4 @@ from pyorg2.dev_utils import build_tree_1
     
 def test_everything_1():
     root = build_tree_1()
-    #print(json.dumps(root, default=lambda o:o.to_json_dict(), indent=4))
-    
     print(root.to_html())

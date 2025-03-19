@@ -108,5 +108,13 @@ def build_tree_1():
     link_section = Section(root.trunk, heading_text="Link Section")
     link_1 = Link(link_section, "https://x.com", "Link to X")
     BlankLine(link_section)
-    link_2 = InternalLink(link_section, "Target 3", "Internal link to Target 3")
+    BlankLine(link_section)
+    link_2 = InternalLink(link_section, "Target 1", "Internal link to Target 1")
+    BlankLine(link_section)
+    BlankLine(link_section)
+    link_3 = InternalLink(link_section, "bad target", "Internal link that does not resolve")
+    BlankLine(link_section)
+    BlankLine(link_section)
+    link_4 = InternalLink(link_section, "Text Section", "Internal link to section heading text")
+    
     return root

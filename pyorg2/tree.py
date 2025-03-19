@@ -1,3 +1,4 @@
+import json
 
 class Root:
     """ The base of the tree. The source designates the first source file or buffer parsed to
@@ -9,11 +10,37 @@ class Root:
         self.node_id = 0
         # Always exactly one branch as trunk, others attach to it or each other
         self.trunk = Branch(self, source)
+        self.link_targets = {}
 
     def new_node_id(self):
         self.node_id += 1
         return self.node_id
-    
+
+    def add_link_target(self, node, target_id):
+        self.link_targets[target_id] = LinkTarget(node, target_id)
+
+    def get_link_target(self, target_id):
+        if target_id in self.link_targets:
+            return self.link_targets[target_id].target_node
+        # could be just a heading text
+        return self.find_heading_match(target_id)
+        
+    def find_heading_match(self, text, level=None):
+        if not level:
+            level = self.trunk
+        # breadth first
+        for kid in level.children:
+            if isinstance(kid, Section):
+                if kid.heading.text == text:
+                    return kid.heading
+        for kid in level.children:
+            if not hasattr(kid, 'children'):
+                continue
+            found = self.find_heading_match(text, kid)
+            if found:
+                return found
+        return None
+        
     def to_json_dict(self):
         res = dict(cls=str(self.__class__),
                    props=dict(source=self.source,
@@ -42,6 +69,10 @@ class Root:
                 out_lines.append("}")
             
             out_lines.append("  </style>")
+            out_lines.append("  <script>")
+            obj_tree = json.dumps(self, default=lambda o:o.to_json_dict(), indent=4)
+            out_lines.append(f"      obj_tree = '{obj_tree}'")
+            out_lines.append("  </script>")
             out_lines.append(" </head>")
             out_lines.append("<body>")
             out_lines.extend(lines)
@@ -144,7 +175,8 @@ class Node:
         
     def __str__(self):
         msg = f"({self.node_id}) {self.__class__.__name__} "
-        msg += f"{self.parent.children.index(self)} child of obj {self.parent.node_id}"
+        index = self.parent.children.index(self)
+        msg += f"{index} child of obj {self.parent.node_id}"
         return msg
 
     def get_css_styles(self):
@@ -284,6 +316,12 @@ class Heading(Node):
         res['props']['properties'] = self.properties
         res['props']['level'] = self.level
         return res
+
+    def __str__(self):
+        msg = f"({self.node_id}) {self.__class__.__name__} "
+        msg += f"heading for section {self.parent.node_id}"
+        return msg
+    
         
 class TargetText(Text):
     """ A node that has actual text content, but with special significance because
@@ -292,17 +330,22 @@ class TargetText(Text):
     """
     def __init__(self, parent, text):
         super().__init__(parent, text)
-
+        root = self.find_root()
+        root.add_link_target(self, text)
 
 class LinkTarget():
     """
     This is used to record the fact that a node has a link-to-text associated with it so that
     it can be the target of a link. It is not a node, but has a reference to the node that
-    is the actual target. This is for the various forms other than explicit text including
+    is the actual target. This is for the various target forms including explicit, including
     the named element form which is implemented in the TargetText class.
 
     The supported linkable forms include the explicit name form when can proceed
     any element:
+
+    <<link-to-text>>
+
+    Named:
 
     #+Name: link-to-text
     | col1 | col2 |
@@ -639,6 +682,47 @@ class Link(Container):
         res = dict(cls=superres['cls'], props=lres)
         return res
 
+
+class InternalLink(Link):
+
+    def __init__(self, *args, **argv):
+        super().__init__(*args, **argv)
+        self.target_node = None
+
+    def find_target(self):
+        if not self.target_node:
+            self.target_node =self.find_root().get_link_target(self.target_text)
+        return self.target_node
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        target = self.find_target()
+        if not target:
+            padding, line1 = setup_tag_open("span", indent_level, self)
+            line1 += f'>{self.display_text}</span>'
+            line1 += '<span style="color: red; font-style: italic; font-weight: bold;">'
+            line1 += " !!! link target not found !!!"
+            line1 += "</span>"
+            lines.append(line1)
+            return lines
+        padding, line1 = setup_tag_open("a", indent_level, self)
+        if self.display_text:
+            display_text = self.display_text
+        else:
+            display_text = target_text
+        line1 += f' href="#obj-{target.node_id}">{display_text}</a>'
+        lines.append(line1)
+        return lines
+
+    def to_json_dict(self):
+        ## fiddle the resluts around to make it easier to understand
+        ## by getting the children last
+        res = super().to_json_dict()
+        target = self.find_target()
+        res['props']['target_node'] = str(target)
+        return res
+        
 class Image(Node):
     
     def __init__(self, parent, src_text, alt_text=None):
@@ -665,8 +749,6 @@ class Image(Node):
         res = dict(cls=superres['cls'], props=lres)
         return res
 
-class InternalLink(Link):
-    pass
 
 def setup_tag_open(tag, indent_level, obj):
     root = obj.find_root()

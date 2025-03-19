@@ -20,14 +20,32 @@ class Root:
                    trunk=self.trunk.to_json_dict()))
         return res
 
+    def add_css_class(self, class_spec):
+        self.css_classes[class_spec['name']] = class_spec
+        
     def to_html(self, wrap=True, make_pretty=True):
+        self.css_classes = {}
         indent_level = 0
         lines = []
-        if wrap:
-            lines.append("<html>")
-            lines.append("<body>")
         lines.extend(self.trunk.to_html(indent_level))
         lines.append("</body>")
+        if wrap:
+            out_lines = []
+            out_lines.append("<html>")
+            out_lines.append(" <head>")
+            out_lines.append("  <style>")
+            for class_spec in self.css_classes.values():
+                styles = class_spec['styles']
+                out_lines.append(f".{class_spec['name']}" + " {")
+                for style in styles:
+                    out_lines.append(f"   {style['name']}: {style['value']};")
+                out_lines.append("}")
+            
+            out_lines.append("  </style>")
+            out_lines.append(" </head>")
+            out_lines.append("<body>")
+            out_lines.extend(lines)
+            lines = out_lines
         if make_pretty:
             return "\n".join(lines)
         stripped = []
@@ -54,10 +72,16 @@ class Branch:
         self.parent = parent # could be attatched to a trunk branch, not the root
         self.children = []
 
+    def find_root(self):
+        return self.root
+    
     def add_node(self, node):
         if node not in self.children:
             self.children.append(node)
-        
+
+    def get_css_styles(self):
+        return []
+    
     def to_json_dict(self):
         # don't include back links, up the tree
         res = dict(cls=str(self.__class__),
@@ -122,6 +146,9 @@ class Node:
         msg = f"({self.node_id}) {self.__class__.__name__} "
         msg += f"{self.parent.children.index(self)} child of obj {self.parent.node_id}"
         return msg
+
+    def get_css_styles(self):
+        return []
     
 class BlankLine(Node):
     """ This node records the presence of a blank line in the original text. This
@@ -216,7 +243,8 @@ class Paragraph(Container):
         
         
 class Text(Node):
-    """ A node that has actual content, meaning text. Must have a parent."""
+    """ A node that has actual content, meaning text."""
+
     def __init__(self, parent, text):
         super().__init__(parent)
         self.text = text
@@ -225,7 +253,7 @@ class Text(Node):
         lines = []
         indent_level += 1
         padding, line1 = setup_tag_open("span", indent_level, self)
-        line1 += f"'>{self.text}</span>"
+        line1 += f">{self.text}</span>"
         return [line1,]
     
     def to_json_dict(self):
@@ -298,28 +326,94 @@ class LinkTarget():
 
 
 class BoldText(Text):
-    pass
+
+    def get_css_styles(self):
+        return [dict(name="font-weight", value="bold"),]
 
 class ItalicText(Text):
-    pass
+
+    def get_css_styles(self):
+        return [dict(name="font-style", value="italic"),]
+
 
 class UnderlinedText(Text):
-    pass
+
+    def get_css_styles(self):
+        return [dict(name="text-decoration-line", value="underline"),]
+
 
 class LinethroughText(Text):
-    pass
 
-class InlineCodeText(Text):
-    pass
+    def get_css_styles(self):
+        return [dict(name="text-decoration-line", value="line-through"),]
+
 
 class MonospaceText(Text):
-    pass
+
+    def get_css_styles(self):
+        return [dict(name="font-family", value="monospace"),]
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open(f"span", indent_level, self)
+        line1 += f">{self.text}</span>"
+        lines.append(line1)
+        return lines
+
+class InlineCodeText(Text):
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open(f"code", indent_level, self)
+        line1 += f">{self.text}</code>"
+        return [line1,]
 
 class Blockquote(Container):
-    pass
+
+
+    def __init__(self, parent, cite=None, content=None):
+        super().__init__(parent)
+        self.cite = cite
+        self.children = []
+        if content:
+            for item in content:
+                item.move_to_parent(self)
+        
+    
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("blockquote", indent_level, self)
+        if self.cite:
+            line1 += f' cite="{self.cite}">'
+        else:
+            line1 += '>'
+            
+        lines.append(line1)
+        for node in self.children:
+            lines.extend(node.to_html(indent_level))
+        lines.append(padding + '</blockquote>')
+        return lines
+
 
 class CodeBlock(Text):
-    pass
+
+    def get_css_styles(self):
+        return [dict(name="white-space", value="pre-wrap"),
+                dict(name="font-family", value="monospace"),]
+
+    def to_html(self, indent_level):
+        lines = []
+        indent_level += 1
+        padding, line1 = setup_tag_open("code", indent_level, self)
+        line1 += ">"
+        lines.append(line1)
+        lines.append(self.text)
+        lines.append(padding + '</code>')
+        return lines
+
 
 class List(Container):
     pass
@@ -463,6 +557,12 @@ class DefinitionListItemDescription(Container):
 
 class Table(Container):
 
+    def get_css_styles(self):
+        res = []
+        res.append(dict(name="table-layout", value="fixed"))
+        res.append(dict(name="border", value="1px solid black"))
+        return res
+
     def to_html(self, indent_level):
         lines = []
         indent_level += 1
@@ -476,6 +576,11 @@ class Table(Container):
 
 class TableRow(Container):
 
+    def get_css_styles(self):
+        res = []
+        res.append(dict(name="border", value="1px solid black"))
+        return res
+
     def to_html(self, indent_level):
         lines = []
         indent_level += 1
@@ -488,6 +593,11 @@ class TableRow(Container):
         return lines
 
 class TableCell(Container):
+
+    def get_css_styles(self):
+        res = []
+        res.append(dict(name="border", value="1px solid black"))
+        return res
 
     def to_html(self, indent_level):
         lines = []
@@ -559,10 +669,13 @@ class InternalLink(Link):
     pass
 
 def setup_tag_open(tag, indent_level, obj):
+    root = obj.find_root()
     padding = " " * indent_level  * 4
     line1 = padding
     line1 += f'<{tag} id="obj-{obj.node_id}" '
-    line1 += f'class="org-auto-{obj.__class__.__name__}"'
+    classname = f"org-auto-{obj.__class__.__name__}"
+    root.add_css_class(dict(name=classname, styles=obj.get_css_styles()))
+    line1 += f'class="{classname}"'
     return padding, line1
     
 

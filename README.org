@@ -1,6 +1,7 @@
-* py-org
-[[https://travis-ci.org/nasa9084/py-org.svg?branch=master]]
-
+* Fork of py-org https://github.com/nasa9084/py-org
+* Abandoned in favor of https://github.com/dlparker/roam2doc
+** Was for mods that were eventually intended to support org-roam links. Useful things still here are improved and updated tests.
+** rest of this file is from original repo
 The org-mode parser for python
 
 ** Supported Feature
